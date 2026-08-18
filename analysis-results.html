@@ -229,7 +229,7 @@
             <div class="cond-label">Possible Condition</div>
             <div class="cond-name" id="condName">Fungal Skin Infection</div>
             <div class="cond-sub" id="condSub">(Tinea Corporis)</div>
-            <div class="conf-label">Confidence Score</div>
+            <div class="conf-label">AI Assessment</div>
             <div class="ring-wrap">
               <div class="ring"><span>87%</span></div>
               <div class="conf-tag">● High Confidence</div>
@@ -325,31 +325,245 @@
 </div>
 
 <script>
-  // Populate today's date/time
+  // -------------------------------
+  // MediScan AI dynamic result page
+  // -------------------------------
+
+  const result = sessionStorage.getItem("mediscan_ai_result") || "";
+  const storedImg = sessionStorage.getItem("mediscan_uploaded_image") || "";
+
+  // Timestamp
   const d = new Date();
-  const dateStr = d.toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
-  const timeStr = d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
-  document.getElementById('resultTimestamp').textContent = dateStr + ' • ' + timeStr;
-
-  // If a symptom image was passed via sessionStorage from the consultation form, show it
-  try {
-    const storedImg = sessionStorage.getItem('mediscan_uploaded_image');
-    if(storedImg){
-      const img = document.getElementById('resultImg');
-      img.src = storedImg;
-      img.style.display = 'block';
-      document.getElementById('imgFallback').style.display = 'none';
-    }
-    const storedName = sessionStorage.getItem('mediscan_patient_name');
-    // (name not shown in this layout, reserved for future use)
-  } catch(e) {}
-
-  document.getElementById('downloadBtn').addEventListener('click', () => {
-    alert('PDF download would start here (demo only — no backend connected).');
+  const dateStr = d.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric"
   });
-  document.getElementById('saveBtn').addEventListener('click', () => {
-    alert('Consultation saved to your history (demo only — no backend connected).');
-    window.location.href = 'consultation-history.html';
+  const timeStr = d.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit"
+  });
+  document.getElementById("resultTimestamp").textContent =
+    dateStr + " • " + timeStr;
+
+  // Show uploaded image
+  if (storedImg) {
+    const img = document.getElementById("resultImg");
+    img.src = storedImg;
+    img.style.display = "block";
+    document.getElementById("imgFallback").style.display = "none";
+  }
+
+  function getSection(text, names) {
+    for (const name of names) {
+      const pattern = new RegExp(
+        "(?:^|\\n)\\s*" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+        "\\s*:?\\s*\\n?([\\s\\S]*?)(?=\\n\\s*[A-Z][A-Z ]{2,}:|$)",
+        "i"
+      );
+      const match = text.match(pattern);
+      if (match && match[1].trim()) return match[1].trim();
+    }
+    return "";
+  }
+
+  function cleanText(value) {
+    return value
+      .replace(/\*\*/g, "")
+      .replace(/^[-•]\s*/gm, "")
+      .replace(/^\s*[-*]\s*/gm, "")
+      .trim();
+  }
+
+  function toItems(value) {
+    if (!value) return ["No information returned by the AI."];
+    const cleaned = value.replace(/\*\*/g, "").trim();
+
+    const lines = cleaned
+      .split(/\n+/)
+      .map(line => line.replace(/^\s*(?:[-•*]|\d+[.)])\s*/, "").trim())
+      .filter(Boolean);
+
+    if (lines.length > 1) return lines;
+    return cleaned.split(/(?<=[.!?])\s+/).filter(Boolean);
+  }
+
+  function setList(selector, value) {
+    const list = document.querySelector(selector);
+    if (!list) return;
+
+    list.innerHTML = "";
+    toItems(value).forEach(item => {
+      const li = document.createElement("li");
+      const span = document.createElement("span");
+      span.className = "c";
+      span.textContent = "•";
+      li.appendChild(span);
+      li.appendChild(document.createTextNode(" " + cleanText(item)));
+      list.appendChild(li);
+    });
+  }
+
+  if (result) {
+    const condition = cleanText(
+      getSection(result, ["POSSIBLE CONDITION", "POSSIBLE DISEASE"]) ||
+      "Preliminary finding"
+    );
+
+    const findings = getSection(
+      result,
+      ["IMAGE FINDINGS", "DETECTED IMAGE FEATURES", "IMAGE FEATURES"]
+    );
+
+    const causes = getSection(
+      result,
+      ["POSSIBLE CAUSES", "POSSIBLE CAUSE"]
+    );
+
+    const firstAid = getSection(
+      result,
+      ["FIRST AID", "HOME CARE"]
+    );
+
+    const medicines = getSection(
+      result,
+      ["RECOMMENDED MEDICINES", "MEDICINES", "MEDICATION INFORMATION"]
+    );
+
+    const doctor = getSection(
+      result,
+      ["DOCTOR RECOMMENDATION", "VETERINARY RECOMMENDATION", "PROFESSIONAL RECOMMENDATION"]
+    );
+
+    const urgency = cleanText(
+      getSection(result, ["URGENCY LEVEL", "EMERGENCY LEVEL"]) || "Not specified"
+    );
+
+    // Hero condition
+    document.getElementById("condName").textContent = condition;
+    document.getElementById("condSub").textContent =
+      "Preliminary AI-generated assessment — not a diagnosis";
+
+    // We do not invent a medical confidence percentage.
+    const ring = document.querySelector(".ring");
+    const ringText = document.querySelector(".ring span");
+    const confTag = document.querySelector(".conf-tag");
+
+    if (ring && ringText && confTag) {
+      ring.style.background =
+        "conic-gradient(var(--blue) 50%, var(--border) 0)";
+      ringText.textContent = "AI";
+      confTag.textContent = "● Preliminary assessment";
+      confTag.style.color = "var(--blue)";
+    }
+
+    // Dynamic cards
+    setList(".info-panel.green .info-list", findings);
+    setList(".info-panel.orange .info-list", causes);
+    setList(".info-panel.blue .info-list", firstAid);
+
+    // Medicines card
+    const medicineList = document.querySelector(".info-panel.purple .info-list");
+    if (medicineList) {
+      if (medicines) {
+        setList(".info-panel.purple .info-list", medicines);
+      } else {
+        medicineList.innerHTML = `
+          <li>
+            <span class="c">•</span>
+            No specific medicine recommendation was returned.
+          </li>
+        `;
+      }
+    }
+
+    // Doctor recommendation
+    const doctorText = document.querySelector(".doctor-row p");
+    if (doctorText) {
+      doctorText.textContent =
+        doctor || "Consult a qualified healthcare professional for an appropriate evaluation.";
+    }
+
+    // Urgency
+    const urgencyChip = document.querySelector(".emergency-level-chip");
+    const urgencyText = document.querySelector(".info-panel.pink p");
+    const gaugeDot = document.querySelector(".gauge-dot");
+
+    if (urgencyChip) urgencyChip.textContent = urgency;
+
+    if (urgencyText) {
+      urgencyText.textContent =
+        "AI-estimated urgency based on the information provided. Seek professional care if symptoms are severe, worsening, or concerning.";
+    }
+
+    if (gaugeDot) {
+      const lower = urgency.toLowerCase();
+
+      let position = "8%";
+      if (lower.includes("moderate")) position = "38%";
+      if (lower.includes("high")) position = "68%";
+      if (lower.includes("critical")) position = "92%";
+
+      gaugeDot.style.left = position;
+      gaugeDot.style.borderColor =
+        lower.includes("critical") || lower.includes("high")
+          ? "var(--red)"
+          : lower.includes("moderate")
+          ? "var(--orange)"
+          : "var(--green)";
+    }
+
+    // Store raw report for future PDF/history features
+    sessionStorage.setItem("mediscan_last_report", result);
+  } else {
+    document.getElementById("condName").textContent =
+      "No AI result available";
+    document.getElementById("condSub").textContent =
+      "Please return to Human Consultation and run an analysis.";
+  }
+
+  // Download: save a simple text report for now.
+  document.getElementById("downloadBtn").addEventListener("click", () => {
+    if (!result) {
+      alert("No AI report is available to download.");
+      return;
+    }
+
+    const report =
+      "MEDISCAN AI - PRELIMINARY AI REPORT\n\n" +
+      result +
+      "\n\nDISCLAIMER:\n" +
+      "This AI-generated report is for informational purposes only and is not a medical diagnosis. Please consult a qualified healthcare professional.";
+
+    const blob = new Blob([report], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "MediScan-AI-Report.txt";
+    a.click();
+
+    URL.revokeObjectURL(url);
+  });
+
+  document.getElementById("saveBtn").addEventListener("click", () => {
+    if (!result) {
+      alert("No AI report is available to save.");
+      return;
+    }
+
+    localStorage.setItem(
+      "mediscan_saved_report",
+      JSON.stringify({
+        date: new Date().toISOString(),
+        type: "Human",
+        result: result,
+        image: storedImg
+      })
+    );
+
+    alert("Consultation saved successfully.");
+    window.location.href = "consultation-history.html";
   });
 </script>
 
