@@ -12,9 +12,12 @@ app = Flask(__name__)
 CORS(app)
 
 # Gemini client
-client = genai.Client(
-    api_key=os.getenv("GEMINI_API_KEY")
-)
+api_key = os.getenv("GEMINI_API_KEY")
+
+if not api_key:
+    raise ValueError("GEMINI_API_KEY is not set in .env")
+
+client = genai.Client(api_key=api_key)
 
 
 @app.route("/")
@@ -27,30 +30,39 @@ def analyze():
 
     try:
 
-        # Get consultation type
+        # -------------------------
+        # GET FORM DATA
+        # -------------------------
+
         consultation_type = request.form.get(
             "type",
             "human"
         )
 
-        # Get symptoms
         symptoms = request.form.get(
             "symptoms",
             ""
         )
 
-        # Get uploaded image
         image = request.files.get("image")
 
-        # Make sure image exists
+        # -------------------------
+        # CHECK IMAGE
+        # -------------------------
+
         if not image:
             return jsonify({
                 "success": False,
                 "error": "Please upload an image."
             }), 400
 
-        # Read image
         image_bytes = image.read()
+
+        if not image_bytes:
+            return jsonify({
+                "success": False,
+                "error": "Uploaded image is empty."
+            }), 400
 
         # -------------------------
         # HUMAN CONSULTATION
@@ -69,7 +81,7 @@ symptoms:
 
 Analyze the image and the symptoms together.
 
-Give the response in this format:
+Give the response in this exact format:
 
 POSSIBLE CONDITION:
 Give possible conditions, not a confirmed diagnosis.
@@ -146,7 +158,7 @@ Behaviour changes:
 Analyze the uploaded image together with
 the information above.
 
-Give the response in this format:
+Give the response in this exact format:
 
 POSSIBLE CONDITION:
 Give possible conditions, not a confirmed diagnosis.
@@ -171,35 +183,123 @@ Encourage consultation with a qualified
 veterinarian when appropriate.
 """
 
-        # Send image + prompt to Gemini
-        response = client.models.generate_content(
-            model="gemini-3.6-flash",
-            contents=[
-                prompt,
-                {
-                    "inline_data": {
-                        "mime_type": image.mimetype,
-                        "data": image_bytes
-                    }
-                }
-            ]
-        )
+        # -------------------------
+        # SEND TO GEMINI
+        # -------------------------
 
-        # Send result back to website
+        try:
+
+            response = client.models.generate_content(
+                model="gemini-3.6-flash",
+                contents=[
+                    prompt,
+                    {
+                        "inline_data": {
+                            "mime_type": image.mimetype,
+                            "data": image_bytes
+                        }
+                    }
+                ]
+            )
+
+        except Exception as gemini_error:
+
+            print("\n==============================")
+            print("GEMINI ERROR")
+            print("==============================")
+            print(gemini_error)
+            print("==============================\n")
+
+            return jsonify({
+                "success": False,
+                "error": "Gemini is temporarily unavailable. Please try again."
+            }), 503
+
+        # -------------------------
+        # EXTRACT GEMINI TEXT
+        # -------------------------
+
+        result_text = ""
+
+        try:
+
+            # First try the normal response.text
+            if hasattr(response, "text") and response.text:
+                result_text = response.text.strip()
+
+        except Exception as text_error:
+            print("Response text extraction warning:", text_error)
+
+        # If response.text was empty, inspect candidates
+        if not result_text:
+
+            try:
+
+                if response.candidates:
+
+                    for candidate in response.candidates:
+
+                        if not candidate.content:
+                            continue
+
+                        if not candidate.content.parts:
+                            continue
+
+                        for part in candidate.content.parts:
+
+                            if hasattr(part, "text") and part.text:
+                                result_text += part.text
+
+            except Exception as extraction_error:
+
+                print(
+                    "Detailed response extraction error:",
+                    extraction_error
+                )
+
+        # -------------------------
+        # CHECK RESULT
+        # -------------------------
+
+        if not result_text.strip():
+
+            print("Gemini returned no readable text.")
+
+            return jsonify({
+                "success": False,
+                "error": "Gemini returned no readable analysis."
+            }), 502
+
+        # -------------------------
+        # RETURN RESULT
+        # -------------------------
+
         return jsonify({
             "success": True,
-            "result": response.text
+            "result": result_text
         })
+
+    # -------------------------
+    # GENERAL ERROR
+    # -------------------------
 
     except Exception as e:
 
-        print("ERROR:", e)
+        print("\n==============================")
+        print("SERVER ERROR")
+        print("==============================")
+        print(e)
+        print("==============================\n")
 
         return jsonify({
             "success": False,
             "error": str(e)
         }), 500
 
+
+# -------------------------
+# START SERVER
+# -------------------------
 
 if __name__ == "__main__":
 
